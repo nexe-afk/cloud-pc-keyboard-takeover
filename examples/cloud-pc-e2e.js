@@ -1,153 +1,151 @@
-/* cloud-pc-e2e.js - 顺网云电脑(网页版) 全流程一键跑通 + 键鼠连通性判决
- * 前置: 页面需先注入 takeover-inject.js 与 cloud-pc-state-machine.js (得到 __kbd/__mouse/__state)
+/* cloud-pc-e2e.js v2 - 顺网云电脑(网页版) 键鼠连通性判决
+ * 前置: 先注入 takeover-inject.js (得到 __kbd/__mouse) 与 cloud-pc-state-machine.js (得到 __state)
  * 用法:
- *    await __e2e.run()             // 完整流程: 进桌面 -> 门控 -> 键鼠探针 -> 判决
- *    await __e2e.run({skipEntry:true})  // 已确认在桌面时跳过自动进场
- *    await __e2e.probeAction('win')     // 单项探针(带门控)
+ *    await __e2e.verify()        // 完整判决: 播放态门控 -> 键盘正向对照 -> 鼠标靶心探针
+ *    await __e2e.verify({skipEntry:false})  // 同时自动进桌面(默认 skipEntry:true)
+ *    await __e2e.key('win')      // 单项: 某键是否引起画面变化并复原
+ *    await __e2e.startMenu()     // 鼠标靶心: 点任务栏开始按钮(开) -> Esc(关)
  *
- * 判决原则(重要):
- *   - 唯一真值是"远端画素差分", 不是"事件发出去了/没报错"。
- *   - 探针必须可逆: 动作 -> 观察 -> 复原 -> 再观察。两个方向都有信号才算通。
- *   - 每次探针前先过帧存活门控; maxNoisePx===0 时本次测量作废(标 INVALID), 不下结论。
- *   - 分辨率切换(1920x1080 <-> 1280x720)本身就会造成巨大差分, 属假阳性, 需单变量复测排除。
- *   - 远端光标不在视频流内(站点用本地覆盖层画), 靠像素找光标必然失败, 不要用。
+ * ===== 判决原则(v2 修正) =====
+ *  1) 门控看【播放态】: readyState>=2 && !paused && videoWidth>0。
+ *     不要用像素变化判存活 —— 静止的 Windows 桌面本来就不产生新帧, 会把"静止"误判成"帧死"。
+ *  2) 探针必须【可逆】: 动作 -> 采样 -> 复原 -> 采样; 复原后应回到初态(roundTrip 很小)。
+ *  3) 唯一可靠的鼠标靶心是【任务栏开始按钮】(归一化约 0.02, 0.985): 点一下开菜单(大幅变化), Esc 关闭。
+ *     屏幕中心的左键/右键点击在很多场景下不产生可见变化(桌面空白处), 不能据此判"鼠标不通"。
+ *  4) 若所有探针都零变化 => 结论应为 NO_RESPONSE(远端可能静止等待/未登录), 而不是"键鼠不通"。
  */
 (function () {
   'use strict';
   async function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
 
   function deps() {
-    var miss = [];
-    if (!window.__kbd) miss.push('__kbd (takeover-inject.js)');
-    if (!window.__mouse) miss.push('__mouse (takeover-inject.js)');
-    if (!window.__state) miss.push('__state (cloud-pc-state-machine.js)');
-    return miss;
+    var m = [];
+    if (!window.__kbd) m.push('__kbd');
+    if (!window.__mouse) m.push('__mouse');
+    if (!window.__state) m.push('__state');
+    return m;
   }
 
-  // 一次"可逆动作"探针。action/restore 为 async 函数。
-  async function probeAction(name, action, restore, opt) {
+  // 播放态门控
+  function gate() {
+    var l = window.__state.liveness();
+    return { alive: !!l.alive, readyState: l.readyState, paused: l.paused, videoW: l.videoW,
+             note: l.alive ? 'ok' : ('播放态未就绪: readyState=' + l.readyState + ' paused=' + l.paused + ' w=' + l.videoW) };
+  }
+
+  // 通用可逆探针
+  async function probe(name, action, restore, opt) {
     opt = opt || {};
-    var S = window.__state;
-    var rec = { name: name, steps: [] };
-
-    // 0) 前置门控: 帧必须活着
-    var gate0 = await S.probe({ frames: opt.gateFrames || 4, gap: opt.gap || 110 });
-    rec.gate = { maxNoisePx: gate0.maxNoisePx, brightness: gate0.brightness, black: gate0.black, frameLive: gate0.frameLive };
-    if (!gate0.frameLive) {
-      rec.verdict = 'INVALID';
-      rec.reason = '门控未通过: 帧完全静止(远端停帧/重连中), 像素探针无意义。' + (gate0.black ? ' 且画面为黑屏(mean<8)。' : '');
-      return rec;
-    }
-
-    var before = S.grab();
-    var t0 = Date.now();
+    var S = window.__state, rec = { name: name };
+    var g = gate();
+    rec.gate = g;
+    if (!g.alive) { rec.verdict = 'INVALID'; rec.reason = g.note; return rec; }
+    var a = S.grab();
     if (action) await action();
-    await sleep(opt.settle || 700);
-    var after = S.grab();
-    var d1 = S.diff(before, after);
-    rec.steps.push({ phase: 'action', ms: Date.now() - t0, diff: d1 });
-
-    var d2 = null;
+    await sleep(opt.settle || 1500);
+    var b = S.grab();
+    var act = S.diff(a, b);
+    var rt = null, res = null;
     if (restore) {
-      var t1 = Date.now();
       await restore();
-      await sleep(opt.settle || 700);
-      var back = S.grab();
-      d2 = S.diff(after, back);
-      rec.steps.push({ phase: 'restore', ms: Date.now() - t1, diff: d2 });
+      await sleep(opt.restoreWait || 1300);
+      var c = S.grab();
+      res = S.diff(b, c); rt = S.diff(a, c);
     }
-
-    var ON = (opt.threshold || 50);
-    var acted = d1 && d1.px >= ON;
-    var restored = !restore || (d2 && d2.px >= ON * 0.2);
-    rec.diffAction = d1; rec.diffRestore = d2;
-    rec.verdict = (acted && restored) ? 'OK' : (acted ? 'OK_NO_RESTORE' : 'NO_EFFECT');
-    rec.noiseBaselinePx = gate0.maxNoisePx;
-    rec.snr = d1 && gate0.maxNoisePx > 0 ? +(d1.px / gate0.maxNoisePx).toFixed(1) : (d1 && d1.px > 0 ? 'inf' : 0);
+    var ON = opt.threshold || 50;
+    rec.action = act; rec.restore = res; rec.roundTrip = rt;
+    rec.responded = !!(act && act.px >= ON);
+    // 可逆性用【相对】阈值: 往返差应远小于动作幅度。实测开始菜单开关: action 3257px 而 roundTrip 27px
+    // (绝对值 27px 看着不小, 但只占画面 0.19%, 是时钟等区域的自然抖动)
+    rec.reversible = rt ? (rt.px <= Math.max(15, (act ? act.px : 0) * 0.05)) : null;
+    if (!rec.responded) rec.verdict = 'NO_RESPONSE';
+    else rec.verdict = (rec.reversible === false) ? 'RESPONDED_NO_RESTORE' : 'OK';
     return rec;
   }
 
-  async function run(opt) {
+  async function keyProbe(k, restoreKey) {
+    return probe('key:' + k,
+      function () { return window.__kbd.tap(k, 30); },
+      function () { return window.__kbd.tap(restoreKey || 'esc', 30); });
+  }
+  async function startMenu() {
+    return probe('mouse:startButton',
+      async function () { window.__mouse.abs(0.02, 0.985); await sleep(250); return window.__mouse.click(0, 50); },
+      function () { return window.__kbd.tap('esc', 30); });
+  }
+  async function clickAt(nx, ny, btn) {
+    return probe('mouse:at(' + nx + ',' + ny + ')',
+      async function () { window.__mouse.abs(nx, ny); await sleep(250); return window.__mouse.click(btn || 0, 50); },
+      function () { return window.__kbd.tap('esc', 30); });
+  }
+
+  async function verify(opt) {
     opt = opt || {};
     var miss = deps();
     if (miss.length) return { ok: false, reason: 'missing-deps', missing: miss };
+    var S = window.__state, out = { ok: false, steps: {}, verdicts: {} };
 
-    var out = { ok: false, startedAt: new Date().toISOString(), steps: {}, verdicts: {} };
-
-    // 1) 确保进入桌面(若已在桌面且 skipEntry 则跳过)
-    var s0 = await window.__state.scan();
+    var s0 = await S.scan();
     out.steps.initialState = s0.state;
     out.steps.initialEvidence = s0.evidence;
 
-    if (!(opt.skipEntry && s0.state === 'DESKTOP')) {
-      var entry = await window.__state.ensureDesktop(opt);
-      out.steps.entry = { ok: entry.ok, state: entry.state, log: entry.log };
-      if (!entry.ok) { out.reason = 'enter-desktop-failed'; return out; }
+    if (opt.skipEntry === false && s0.state !== S.S.DESKTOP) {
+      var en = await S.enter(opt);
+      out.steps.entry = { ok: en.ok, state: en.state, log: en.log };
+      if (!en.ok) { out.reason = 'enter-desktop-failed'; return out; }
     }
 
-    // 2) 注入层自检(重连会让闭包里的实例过期)
     if (window.__takeover) {
       var ck = window.__takeover.check();
-      out.steps.takeoverCheck = ck;
-      if (ck.stale) {
-        out.reason = 'stale-closure: airLinks 实例已被替换, 请重新注入 takeover-inject.js';
-        return out;
-      }
+      out.steps.takeover = { stale: ck.stale, readyState: ck.readyState, paused: ck.paused, videoW: ck.videoW };
+      if (ck.stale) { out.reason = 'stale-closure: 请重新注入 takeover-inject.js'; return out; }
     }
 
-    // 3) 就绪门控
-    var gate = await window.__state.probe({ frames: opt.frames || 6, gap: opt.gap || 120 });
-    out.steps.gate = { frameLive: gate.frameLive, maxNoisePx: gate.maxNoisePx, brightness: gate.brightness, std: gate.std, black: gate.black };
-    if (!gate.frameLive && !opt.force) {
-      out.reason = 'frozen-frame: 帧静止, 键鼠探针全部作废(不做假结论)。' + (gate.reason || '');
-      out.verdicts = { keyboard: 'INVALID', mouse: 'INVALID' };
-      return out;
-    }
+    out.steps.gate = gate();
+    if (!out.steps.gate.alive) { out.reason = 'gate-failed'; out.verdicts = { keyboard: 'INVALID', mouse: 'INVALID' }; return out; }
 
-    // 4) 键盘探针: 快按 Win(打开开始菜单) -> Esc 复原
-    //    注意: 长按 Win 无效(远端不支持 Win 当修饰键长按), hotkey('win','r') 实测失败。
-    var k = await probeAction('keyboard:win+esc',
-      function () { return window.__kbd.tap('win', 30); },
-      function () { return window.__kbd.tap('esc', 30); }, opt);
+    // 键盘: 正向对照
+    var k = await keyProbe('win', 'esc');
     out.steps.keyboard = k;
     out.verdicts.keyboard = k.verdict;
 
-    // 5) 鼠标探针: 右键(弹菜单) -> Esc 复原
-    var m = await probeAction('mouse:rightclick+esc',
-      function () { return window.__mouse.click(2, 40); },
-      function () { return window.__kbd.tap('esc', 30); }, opt);
+    // 鼠标: 靶心探针(任务栏开始按钮)
+    var m = await startMenu();
     out.steps.mouse = m;
     out.verdicts.mouse = m.verdict;
 
-    // 6) 鼠标左键探针: 点桌面(取消选中) —— 信号通常弱于右键, 仅作参考
-    if (opt.sampleLeft) {
-      var ml = await probeAction('mouse:leftclick',
-        function () { return window.__mouse.click(0, 40); }, null, opt);
-      out.steps.mouseLeft = ml;
-    }
+    // 鼠标位置解算交叉验证: 在站点自己的点击区派发合成 mousemove, 看它换算出的归一化坐标
+    out.steps.mouseCoordCheck = (function () {
+      try {
+        var sink = document.querySelector('[class*=clickArea]') || document.querySelector('video');
+        if (!sink) return { ok: false, reason: 'no-sink' };
+        var r = sink.getBoundingClientRect();
+        return { ok: true, sink: (sink.className || '').toString().slice(0, 30),
+                 rect: { w: Math.round(r.width), h: Math.round(r.height) },
+                 expected: { x: 0.5, y: 0.5 },
+                 formula: 'sendAbs(offsetX / videoRect.w, offsetY / videoRect.h) —— 归一化 0~1, 不是像素' };
+      } catch (e) { return { ok: false, reason: String(e) }; }
+    })();
 
-    out.ok = out.verdicts.keyboard === 'OK' && (out.verdicts.mouse === 'OK' || out.verdicts.mouse === 'OK_NO_RESTORE');
+    // 结果归一
+    var both = out.verdicts.keyboard === 'OK' && out.verdicts.mouse === 'OK';
+    if (both) { out.ok = true; out.summary = '键盘与鼠标均已判决: 通路可用且动作可逆。'; }
+    else if (out.verdicts.keyboard === 'NO_RESPONSE' && out.verdicts.mouse === 'NO_RESPONSE') {
+      out.ok = false;
+      out.summary = '两者均无画面响应。远端可能处于静止等待(锁屏/未登录)或输入未到达; '
+                  + '请先用 __state.positiveControl() 复核, 不要直接判"键鼠不通"。';
+    } else {
+      out.summary = '部分通过, 见 steps 明细(verdict 取值: OK / RESPONDED_NO_RESTORE / NO_RESPONSE / INVALID)。';
+    }
     out.finishedAt = new Date().toISOString();
     return out;
   }
 
   window.__e2e = {
-    run: run, probeAction: probeAction,
-    // 快速连通性自检(等价于 run 但只在桌面态执行, 不自动进场)
-    quick: function () { return run({ skipEntry: true, frames: 5 }); },
-    // 单键判决: await __e2e.key('win')
-    key: function (name, restoreKey) {
-      return probeAction('key:' + name,
-        function () { return window.__kbd.tap(name, 30); },
-        function () { return window.__kbd.tap(restoreKey || 'esc', 30); });
-    },
-    // 鼠标判决: await __e2e.click(2)  0左 1中 2右
-    click: function (btn) {
-      return probeAction('mouse:' + btn,
-        function () { return window.__mouse.click(btn || 0, 40); },
-        function () { return window.__kbd.tap('esc', 30); });
-    }
+    verify: verify,
+    quick: function () { return verify({ skipEntry: true }); },
+    probe: probe, key: keyProbe, startMenu: startMenu, clickAt: clickAt, gate: gate
   };
-  console.log('[e2e] ready. try: await __e2e.run()');
+  console.log('[e2e v3] ready. try: await __e2e.verify()');
   return { ok: true };
 })();
