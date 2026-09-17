@@ -62,3 +62,17 @@ examples/drive-demo.js    直接在控制台运行的驱动示例
 本项目仅用于 **自有设备 / 已授权环境** 的自动化与测试。使用者须自行确保对目标云电脑拥有合法控制权，不得用于未授权访问或任何违法用途。代码中引用的第三方 SDK 接口仅作技术记录。
 
 MIT License
+
+---
+
+## 注意：断线重连后必须重新注入
+
+云电脑会话中途重连会**替换** `airLinks` 实例，而注入时闭包捕获的 `pc` 仍指向旧实例。
+此时 `__kbd` / `__mouse` 看起来完全正常，但事件**静默丢失、无任何报错**。使用前务必自检：
+
+~~~js
+window.__takeover.pc === window.airLinks.pc   // 必须为 true，否则重新注入
+~~~
+
+另：`pc` 是普通 JS 类实例，仅输入类方法（sendKeydown / sendAbs / sendrel 等）被转成 `[native code]`。
+详细实证（含 wire 级验证法、已排除的探测路径）见 [docs/cloud-pc-takeover-notes.md](docs/cloud-pc-takeover-notes.md) 第 11 节。
