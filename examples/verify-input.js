@@ -4,6 +4,9 @@
  * 在已连接的云电脑页面控制台里运行。不依赖 __kbd / __mouse，直接用 airLinks SDK。
  * 判定方式：把远端画面当唯一真值，用可逆动作做探针。
  *
+ * ⚠️ 已被 examples/cloud-pc-e2e.js (__e2e.verify) 取代, 本文件保留作参考。
+ *    新版修正了状态机与门控判据: 存活要看播放态(readyState/paused)而非像素变化 ——
+ *    静止的 Windows 桌面本就不产生新帧, 用像素判断"是否就绪"会误判。
  * 用法：
  *   await verifyInput()                    // 跑全套：连接态 + 键盘 + 鼠标
  *   await verifyInput({ probe: "kbd" })     // 只测键盘
