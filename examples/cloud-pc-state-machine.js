@@ -49,7 +49,21 @@
     return st.visibility !== 'hidden' && st.display !== 'none' && Number(st.opacity) > 0;
   }
   function startTipVisible() { return visible(document.querySelector('[class*=start-tip]')); }
-  function reconnecting() { return has('正在重连'); }
+  // ★ 弹窗关闭后其文本仍留在 DOM(innerText 可读到), 用 has() 判状态会误判。
+  //   实测: 结束订单后页面已回到 IDLE, 但残留的「连接失败，请重新连接」仍让状态机报 RECONNECT。
+  //   故凡是判某个提示是否出现, 都必须要求承载它的元素【可见】。
+  function visibleText(s) {
+    var all = document.querySelectorAll('div,span,p,section');
+    for (var i = 0; i < all.length; i++) {
+      var el = all[i];
+      var t = el.innerText || '';
+      if (t.indexOf(s) < 0) continue;
+      if (t.length > s.length * 12) continue;
+      if (visible(el)) return true;
+    }
+    return false;
+  }
+  function reconnecting() { return visibleText('正在重连'); }
 
   function findClickable(s) {
     var all = document.querySelectorAll('button,a,div,span,li,input[type=button],input[type=submit]');
@@ -76,7 +90,7 @@
   function desktopReady() {
     if (!pc()) return false;
     if (startTipVisible()) return false;
-    if (reconnecting() || has('连接失败')) return false;
+    if (reconnecting() || visibleText('连接失败')) return false;
     return liveness().alive;
   }
 
@@ -92,8 +106,8 @@
     var labels = ['启动云电脑','快速启动','进入桌面','结束订单','返回桌面','重新连接','点击开始游戏','开始游戏','进入游戏','可用时长不足','连接失败'];
     for (var i = 0; i < labels.length; i++) if (findClickable(labels[i])) st.buttons.push(labels[i]);
 
-    if (has('可用时长不足')) st.state = STATE.TIME_LOW;
-    else if (has('连接失败') || findClickable('重新连接')) st.state = STATE.RECONNECT;
+    if (visibleText('可用时长不足')) st.state = STATE.TIME_LOW;
+    else if (visibleText('连接失败') || findClickable('重新连接')) st.state = STATE.RECONNECT;
     else if (reconnecting()) st.state = STATE.RECONNECTING;
     else if (startTipVisible() || findClickable('点击开始游戏')) st.state = STATE.LANDING;
     else if (desktopReady()) st.state = STATE.DESKTOP;
@@ -183,6 +197,6 @@
     ensureDesktop: enter,
     clickLabel: function (s) { var el = findClickable(s); if (!el) return { ok: false, reason: 'not-found' }; el.click(); return { ok: true, clicked: s }; }
   };
-  console.log('[state v3] ready. try: await __state.scan()');
+  console.log('[state v4] ready. try: await __state.scan()');
   return { ok: true };
 })();

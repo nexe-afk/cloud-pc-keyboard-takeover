@@ -120,3 +120,38 @@ A=65、Enter=13、Esc=27、Win=91、Ctrl=17、Shift=16。传标准 VK 即可，S
   在这个窗口点『点击开始游戏』会立刻再次断线（本次实测连续复现）。状态机 v3 已在 `enter()` 里加了 `liveness().alive` 前置门控。
 - 会话稳定性与调用方式有关：单次 `page_eval` 短(≤10s)时全程稳定；一旦发起 20s+ 阻塞调用就掉线。
 - `getVideoPlaybackQuality().totalVideoFrames` 在本站 MediaStream 管线里**恒为 0**，不能当存活证据。
+
+## 实测记录（真实会话，从零到可操作）
+
+完整链路（一次成功）：
+`IDLE` →(点『启动云电脑』)→ `INSTANCE_PANEL` →(点『进入桌面』)→ `LANDING` →(点『点击开始游戏』)→ `DESKTOP`
+
+掉线恢复链路：
+`RECONNECTING` →(等)→ `RECONNECT` →(点『重新连接』)→ `LANDING` →(**等 `readyState=4 && !paused`**)→(点『点击开始游戏』)→ `DESKTOP`
+
+判决输出（`await __e2e.verify({skipEntry:true})`）：
+```
+{ ok: true, verdicts: { keyboard: 'OK', mouse: 'OK' } }
+keyboard tap('win') + Esc     : action 3256px (22.6%) / roundTrip 5px
+mouse    点任务栏开始按钮 + Esc : action 3256px (22.6%) / roundTrip 2px
+```
+
+多字符打字链路（`__kbd.type()`，实测）：
+开开始菜单(4028px) → `type('notepad')`（134px，搜索框出现文字）→ `tap('enter')` → **2568px (17.8%)，应用被启动**
+
+### 追加踩坑
+
+6. **弹窗关闭后文本仍留在 DOM**：`document.body.innerText` 里仍能搜到「连接失败，请重新连接」，
+   于是用字符串包含判状态会在订单已结束、页面回到 `IDLE` 时误报 `RECONNECT`。
+   必须要求承载提示的元素【可见】（v4 的 `visibleText()`）。
+   **判别技巧**：若 `buttons` 列表里**没有**『重新连接』而状态却是 `RECONNECT`，那就是残留文本造成的假判。
+
+7. **弹窗会叠加**：实测同时存在可见的『退出后将清空所有数据…』（z-index 9999、全屏 1268×898）
+   与『连接失败，请重新连接』。`document.querySelector('[class*=modal-container]')` 取到的未必是
+   当前该处理的那一个，需按文本匹配遍历。
+
+8. **结束订单要过两道确认**：『结束订单』→『退出后将清空所有数据…[确认]』→『温馨提示 是否直接关闭该订单？[确定]』。
+   只点第一个不会真的结束订单。
+
+9. **`type()` 很慢**：逐字符（含 Shift 处理）实测 7 字符约 2.8s，≈400ms/字符（含字符间 12ms 间隔）。
+   长文本请分段调用，避免单次 `page_eval` 超 10s。
