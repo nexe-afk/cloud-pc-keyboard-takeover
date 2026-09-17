@@ -116,4 +116,7 @@ A=65、Enter=13、Esc=27、Win=91、Ctrl=17、Shift=16。传标准 VK 即可，S
 
 - 单次 `page_eval` 控在 **10s 内**：阻塞式长调用会打断站点自身的信令心跳，**实测导致掉线一次**（表现为 `paused:true` + `readyState` 从 4 掉到 0，随后弹『连接失败，请重新连接』）。
 - 掉线后**不要急着点『点击开始游戏』**：连接未就绪时点它会再次触发重连。等 `readyState=4 && !paused` 再点。
+- **实测：这条是真会发生的**。掉线恢复时会先出现 `LANDING` 态的覆盖层，但此时 `readyState` 仍是 0；
+  在这个窗口点『点击开始游戏』会立刻再次断线（本次实测连续复现）。状态机 v3 已在 `enter()` 里加了 `liveness().alive` 前置门控。
+- 会话稳定性与调用方式有关：单次 `page_eval` 短(≤10s)时全程稳定；一旦发起 20s+ 阻塞调用就掉线。
 - `getVideoPlaybackQuality().totalVideoFrames` 在本站 MediaStream 管线里**恒为 0**，不能当存活证据。

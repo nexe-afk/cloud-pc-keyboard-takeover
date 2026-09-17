@@ -22,7 +22,9 @@
  *  2) ★ 『进入桌面』『结束订单』是实例卡片上的常驻元素, 进桌面后 DOM 里依然存在!
  *     绝不能用它俩判断状态 —— 曾导致扫描连续 6 轮误判为 INSTANCE_PANEL 而空转。
  *     真判据是 start-tip 覆盖层是否可见。
- *  3) start-tip 选择器: [class*=start-tip] 容器(内含 [class*=start-tip-content])。
+ *  3) ★ LANDING 态点击『点击开始游戏』前必须确认流已就绪(见 enter() 内注释):
+ *     未就绪就点会再次触发断线重连。
+ *  4) start-tip 选择器: [class*=start-tip] 容器(内含 [class*=start-tip-content])。
  *     元素常驻但会隐藏(0x0), 必须用 getBoundingClientRect().width>0 判可见。
  */
 (function () {
@@ -154,7 +156,14 @@
       }
       if (s.state === STATE.RECONNECT) { var rb = findClickable('重新连接'); if (rb) rb.click(); await sleep(opt.reconnectWait || 6000); continue; }
       if (s.state === STATE.RECONNECTING) { await sleep(opt.reconnectingWait || 3000); continue; }
-      if (s.state === STATE.LANDING) { var sb = findClickable('点击开始游戏') || findClickable('开始游戏'); if (sb) sb.click(); await sleep(opt.startWait || 5000); continue; }
+      if (s.state === STATE.LANDING) {
+        // ★ 必须先确认流已就绪(readyState>=2 && !paused && videoWidth>0) 再点『点击开始游戏』。
+        //   实测: 连接未就绪时就点它, 会导致再次掉线进入 RECONNECTING(页面显示『正在重连中...』)。
+        if (!liveness().alive) { await sleep(opt.waitStream || 2000); continue; }
+        var sb = findClickable('点击开始游戏') || findClickable('开始游戏');
+        if (sb) sb.click();
+        await sleep(opt.startWait || 5000); continue;
+      }
       if (s.state === STATE.IDLE) {
         var lb = findClickable('启动云电脑') || findClickable('快速启动');
         if (!lb) return { ok: false, state: s.state, log: log };
@@ -174,6 +183,6 @@
     ensureDesktop: enter,
     clickLabel: function (s) { var el = findClickable(s); if (!el) return { ok: false, reason: 'not-found' }; el.click(); return { ok: true, clicked: s }; }
   };
-  console.log('[state v2] ready. try: await __state.scan()');
+  console.log('[state v3] ready. try: await __state.scan()');
   return { ok: true };
 })();
