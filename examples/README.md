@@ -194,3 +194,18 @@ __keep.stop()
 | 只有无害弹窗时 pick(确认) | 找到 | 找到 |
 | pick(结束订单) | null | null |
 | 弹窗文本提取 dialogTextOf() | 含关键词 | 含 |
+
+---
+
+## keepalive.js — 每 3 分钟巡检弹窗（v2.3）
+
+非侵入式保活：不改布局、不抢焦点、不发键鼠给远端；取画面用**离屏 canvas 缩略图**（不显示、不整屏截图）。
+检测到弹窗时按白/黑名单安全关闭（**永久拒点 结束订单 / 去充值 / 支付**，「确认」需命中无害上下文才放行），
+且「重新连接」只在视频流已死时才点。
+
+```js
+await __keep.start();   // 3 分钟一轮；本轮有弹窗则 15 秒后复查
+__keep.state(); __keep.log(10); __keep.shot(); __keep.selfTest(); __keep.stop();
+```
+
+完整说明见 [`README-keepalive.md`](./README-keepalive.md)；验证：自测 11/11、DOM 对照 6/6。
