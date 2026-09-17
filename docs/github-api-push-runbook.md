@@ -76,3 +76,21 @@ await fetch('https://api.github.com/repos/'+REPO+'/contents/'+PATH, {
 - **令牌绝不写入仓库、绝不 commit、绝不进日志文件。**
 - 令牌值出现在对话/终端即已暴露 → 用完建议 **Settings → Developer settings → Tokens (classic) → Delete** 立即吊销。
 - 生产用途优先用 **fine-grained token** 限定到单仓库 + 最小权限。
+
+## 补充（实测）：可以不离开当前页面直接推
+
+**结论：在被分析页面自身的 JS 上下文里直接 `fetch` GitHub API 是可行的**（浏览器 CORS 允许），因此**不必导航到 github.com 去用网页编辑器**。
+这一条很关键：如果当前页面正是一个**已连接的云电脑 / 长会话**，导航离开会中断它；而在页面里 fetch 则不影响会话。
+
+实测数据：
+
+- `GET /repos/{r}/contents/{path}` → 200，正常
+- `PUT /repos/{r}/contents/{path}`（新建）→ **201**，约 1.3s（body base64 约 10.9KB）
+- `DELETE` → 200
+- `OPTIONS` 预检 → 报 NetworkError（不碍事，浏览器缓存/真实预检自行处理，实际 PUT 成功）
+
+### 两个坑
+
+1. **偶发 `JSON.parse: unexpected end of data at line 1 column 1`**：单次 eval 里串行打多个 fetch（>=3 个）时被超时中断，页面侧改动已生效但网络请求没跑完 —— 看起来像 JSON 解析错误，其实是**调用被中断**。
+   => **一次 eval 只发 1~2 个请求**；发 PUT 前先把待写内容 `window.__src` 缓存好，重试时不必重新嵌源码。
+2. 更新已存在文件**必须带 `sha`**（先 GET 拿 sha），否则 409。
