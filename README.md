@@ -27,19 +27,23 @@
 
 ## 用法
 
+`src/takeover.js` 注入成功后会挂载三个全局对象：`window.__kbd`（键盘）、`window.__mouse`（鼠标）、`window.__takeover`（含 `AL` / `pc` / `VK` / `NAMED`）。
+
 ~~~js
 // 键盘
-const K = window.__frxKbd;       // 注入后可用，或直接调 airLinks
+const K = window.__kbd;          // 注入 src/takeover.js 后可用，或直接调 airLinks
 K.down(65);                      // A 按下
 K.up(65);                        // A 抬起
 await K.tap(13);                 // 回车
 await K.type('hello world');     // 逐字符输入（自动处理 Shift）
+await K.key('enter');            // 按名称敲键：enter/esc/tab/f1..f12/up/down/win...
 await K.hotkey('ctrl', 'c');     // 组合键
 await K.combo([17, 16], 27);     // Ctrl+Shift+Esc 风格
 
 // 鼠标
-const M = window.__frxMouse;
+const M = window.__mouse;
 M.abs(960, 540);                 // 绝对移动到 (960,540)
+M.moveTo(960, 540);              // 同 abs（别名）
 M.rel(10, -5);                   // 相对移动
 await M.click(0);                // 左键单击
 M.wheel(-120);                   // 滚轮（负 = 向上）
