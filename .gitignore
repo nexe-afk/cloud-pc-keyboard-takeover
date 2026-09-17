@@ -1,0 +1,16 @@
+# 依赖
+node_modules/
+package-lock.json
+pnpm-lock.yaml
+yarn.lock
+
+# 抓包 / 逆向产物
+*.har
+traces/
+work/
+tmp/
+
+# 环境
+.env
+.env.*
+.DS_Store
