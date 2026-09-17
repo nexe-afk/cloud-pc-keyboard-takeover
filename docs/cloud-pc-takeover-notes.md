@@ -1,3 +1,5 @@
+> ⚠️ **修正提示**：本文件部分运行时条目已被证伪或修正 —— 见 [`runtime-verification-round2.md`](./runtime-verification-round2.md)（第二轮实测：`sendAbs` 实际吃归一化坐标 0~1、停帧门控、会话掉线复现与恢复）。
+
 # 顺网云电脑 Web 遥控：接管要点与踩坑记录
 
 > 站点：https://cpc.icloud.cn/gamputer/web/cloud
